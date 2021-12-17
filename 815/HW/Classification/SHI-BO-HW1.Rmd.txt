@@ -1,0 +1,208 @@
+---
+author: "Shi Bo"
+date: "2021/2/5"
+output: pdf_document
+title: "MF815 HW1"
+---
+
+```{r}
+library(ISLR)
+library(tidyverse)
+library(corrplot)
+library(caret)
+library(pROC)
+library(MASS)
+library(class)
+attach(Weekly)
+data(Weekly)
+head(Weekly)
+```
+
+---
+(a) Produce some numerical and graphical summaries of the Weekly data. Are there any
+apparent patterns?
+---
+```{r}
+summary(Weekly)
+dim(Weekly)
+
+ggplot(data = Weekly, mapping = aes(Year,Today)) + 
+  geom_point() + 
+  labs(title = 'Percentage Return for Week Data Graph') + 
+  geom_hline(yintercept = max(Today), color = 'red') +
+  geom_hline(yintercept = min(Today), color = 'blue') + 
+  annotate('text', label = paste('The max and min precentage \n returns are',
+                                 max(Today),'and',min(Today),'respectively.'),
+           x = 1995, y = -10, color = 'lightgreen')
+
+ggplot(data = Weekly, mapping = aes(Year, Volume)) + 
+  geom_point(color = 'black') +
+  geom_smooth() +
+  theme_light() + 
+  labs(title = "Average Daily share trades vs Time", 
+       x = "Time", 
+       y = "volume")
+  
+ggplot(Weekly,aes(x=Year,fill=Direction))+ 
+  geom_bar(position = "fill") + 
+  geom_hline(yintercept = 0.5,col="black") + 
+  scale_y_continuous(labels = scales::percent_format()) + 
+  theme(axis.title.y =element_blank(),legend.position = "bottom") + 
+  ggtitle("% of Up/Down Weeks vs Time")
+
+cormat <- cor(Weekly[2:8])
+corrplot(cormat,
+         method="number",
+         type="upper",
+         bg = 'white',
+         title = 'Weekly stock data correltion matrix',
+         mar = c(1,1,1,1))
+```
+
+---
+(b) Use the full data to perform a logistic regression with Direction as the response variable
+and the five lags variables plus Volume as predictors. Use the summary function to print
+the results. Do any of the predictors appear to be statistical significant? If so which
+ones?
+---
+```{r}
+logit.fit <- glm(Direction ~ Lag1+Lag2+Lag3+Lag4+Lag5+Volume, data = Weekly, family="binomial")
+summary(logit.fit)
+summary(logit.fit)$coef[,4] < 0.05
+```
+---
+(c) Compute the confusion matrix and overall fraction of correct predictions. Explain what
+the confusion matrix is telling you about the types of mistakes logistic regression is
+making.
+---
+```{r}
+logit.probs <- predict(logit.fit,type="response")
+T.response <- Weekly$Direction %>% as.numeric() - 1 
+P.response <- logit.probs %>% round()
+(log.confusion <- confusionMatrix(as.factor(P.response),as.factor(T.response)))
+
+head(Weekly$Direction)
+head(T.response)
+```
+---
+(d) Now fit the logistic regression using a training data period from 1990 to 2008 and Lag2
+as the only predictor. Compute the confusion matrix and overall fraction of correct
+predictions for the hold out data, i.e., 2009 and 2010.
+---
+```{r}
+log.train <- Weekly %>% filter(Year >= 1990 & Year <= 2008)
+log.test <- Weekly %>% filter(Year >= 2009 & Year <= 2010) 
+log.fit <- glm(Direction ~ Lag2,data=log.train,family = "binomial")
+summary(log.fit)
+
+log.pred<-round(predict(log.fit,log.test, type="response"))
+
+True.test <- log.test$Direction %>% as.numeric() - 1
+#Pred.test <- predict(train.fit,log.test,type="response") %>% round()
+(confusion.log <- confusionMatrix(as.factor(log.pred),as.factor(True.test)))
+```
+---
+(e) Repeat (d) using the linear discriminant analysis (LDA).
+---
+```{r}
+(LDA.fit <- lda(Direction ~ Lag2, data = log.train))
+LDA.pred <- predict(LDA.fit, log.test)
+
+(confusion.lda <- confusionMatrix(as.factor(LDA.pred$class), as.factor(log.test$Direction)))
+```
+---
+(f) For the test data using kNN, plot the misclassification error rate vs 1/k. What is the
+optimal k that minimizes the test misclassification error rate?
+---
+```{r}
+train.KNN <- log.train$Lag2 %>% data.frame()
+test.KNN <- log.test$Lag2 %>% data.frame()
+train.Direction <- log.train$Direction
+
+trained.KNN <- knn(train.KNN,train.KNN,as.factor(train.Direction),1)
+pred.KNN <- knn(train.KNN,test.KNN,as.factor(train.Direction),1)
+
+(confusion.KNN <- confusionMatrix(pred.KNN, log.test$Direction))
+confusion.KNN$overall[1]
+
+K_list = seq(100,1)
+x_axis <- 1 / K_list 
+P <- rep(0,length(K_list))
+error_list_test <- c()
+error_list_train <- c()
+for (i in K_list){
+  P <- knn(train.KNN,test.KNN,as.factor(train.Direction),i)
+  t <- knn(train.KNN,train.KNN,as.factor(train.Direction),i)
+  confusion_P <- confusionMatrix(P, log.test$Direction)
+  confusion_T <- confusionMatrix(t, log.train$Direction)
+  error_P <- 1 - confusion_P$overall[1]
+  error_T <- 1 - confusion_T$overall[1]
+  error_list_test <- append(error_list_test, error_P)
+  error_list_train <- append(error_list_train, error_T)
+}
+
+optimal_K <- K_list[which(error_list_test == min(error_list_test))]
+min_error <- min(error_list_test)
+
+ggplot(mapping = aes(x = x_axis, y = error_list_test, color = 'blue')) + 
+  geom_line() + 
+  geom_point() + 
+  geom_point(aes(x = x_axis, y = error_list_train, color = 'red')) +
+  geom_line(aes(x = x_axis, y = error_list_train, color = 'red')) +
+  labs(title = 'Test Error Rate VS 1/k', x = '1/K',y = 'Error Rate') +
+  geom_hline(aes(yintercept=min(error_list_test)), color = 'black', linetype="dashed")
+
+print(paste('The optional K for minimum error is:', optimal_K))
+print(paste('The minimized error is:', min_error))
+```
+---
+(g) Which of these various methods appears to provide the best results on this data?
+---
+```{r}
+log_acc <- confusion.log$overall[1] %>% as.numeric()
+lda_acc <- confusion.lda$overall[1] %>% as.numeric()
+knn_acc <- 1 - min_error
+(df <- data.frame(Accuracy = c('Logistic','LDA','KNN'),
+                 num = c(log_acc,lda_acc,knn_acc)))
+```
+---
+(h) Plot the ROC curves for different classifiers, e.g. logistic regression, LDA, kNN with
+different k values and discuss the performance (the larger the area under the curve, the
+better the classifier).
+---
+```{r}
+
+log_roc <- roc(True.test,predict(log.fit,log.test, type="response"))
+plot(log_roc, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2),
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = 'Logistic ROC')
+
+lda_pre <- LDA.pred$class %>% as.numeric() - 1
+lda_roc <- roc(True.test,LDA.pred$posterior[,1])
+plot(lda_roc, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2),
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = 'LDA ROC')
+
+par(mfrow = c(1,3))
+P.KNN1 <- knn(train.KNN,test.KNN,as.factor(train.Direction),47,prob = TRUE)
+knn_roc1 <- roc(True.test,P.KNN1 %>% as.numeric())
+plot(knn_roc1, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2),
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = 'Optimal KNN ROC')
+
+P.KNN2 <- knn(train.KNN,test.KNN,as.factor(train.Direction),1,prob = TRUE)
+knn_roc2 <- roc(True.test,P.KNN2 %>% as.numeric())
+plot(knn_roc2, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2),
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = 'KNN with K=1 ROC')
+
+P.KNN3 <- knn(train.KNN,test.KNN,as.factor(train.Direction),100)
+knn_roc3 <- roc(True.test,P.KNN3 %>% as.numeric)
+plot(knn_roc3, print.auc=TRUE, auc.polygon=TRUE, grid=c(0.1, 0.2),
+     grid.col=c("green", "red"), max.auc.polygon=TRUE,
+     auc.polygon.col="skyblue", print.thres=TRUE, main = 'KNN with K=100 ROC')
+
+
+```
+
+
